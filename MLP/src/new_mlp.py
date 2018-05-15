@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn import preprocessing
 import matplotlib.pyplot as plt
+import psycopg2,json,traceback
 
 n_input = 20
 n_classes = 2
@@ -15,8 +16,8 @@ def standScale(x_train, x_test):
     prep = preprocessing.StandardScaler().fit(x_train)
     x_train = prep.transform(x_train)
     x_test = prep.transform(x_test)
-
-    return x_train, x_test
+    origin_test = prep.inverse_transform(x_test)
+    return x_train, x_test,origin_test
 
 def readTrain():
     filename3 = "../dataSet/train_data/trainData.csv"
@@ -31,6 +32,14 @@ def readTrain():
     train_x, test_x, train_y, test_y = train_test_split(x_data, y_label, test_size=0.1)  # 选择10%的数据作为测试集
     return train_x,test_x,train_y,test_y
 
+def readTest(filename):
+    test_df = pd.read_csv(filename,header=None)
+    info = test_df.values
+    x_data = info[:, :-1]
+
+    y_data = info[:, -1:]
+
+    return x_data,y_data
 #fetch batch info data
 def fetch_next_batch(input_data,batch_size,index):
     if (index+1) * batch_size <= len(input_data):
@@ -91,48 +100,27 @@ def training(train_x,test_x,train_y,test_y):
         y = tf.placeholder(tf.float32, [None, n_classes], name='input_y')
         learning_rate = tf.placeholder(tf.float32, name='learning_rate')
 
-    ##keep probability
-    # with tf.name_scope('keep_prob'):
-    #     keep_prob = tf.placeholder(tf.float32)
 
-    ###Fully connect layer with 16 nodes
+    ###Fully connect layer with 25 nodes
     with tf.name_scope('full_connect'):
         w1 = init_weight(shape=[n_input,25], st_dev=0.1)
         b1 = init_bias(shape=[25])
         output = layer_compute(x,w1,b1)
         output = activation(output)
 
-    ##mlp 1 with 8 nodes
+    ##output with 2 nodes
     with tf.name_scope('mlp_1'):
         w2 = zero_weight(shape=[25,2])
         b2 = init_bias(shape=[2])
         output = layer_compute(output,w2,b2)
-        # output = activation(output)
-    #
-    # ###mlp 2 with 2 nodes
-    # with tf.name_scope('mlp_2'):
-    #     w3 = init_weight(shape=[8,20], st_dev=0.1)
-    #     b3 = init_bias(shape=[20])
-    #     output = layer_compute(output,w3,b3)
-    #     output = activation(output)
-
-    # with tf.name_scope("fc"):
-    #     w4 = init_weight(shape=[8,2], st_dev=0.1)
-    #     b4 = init_bias([2])
-    #     output = layer_compute(output, w4, b4)
-    #     output = activation(output)
 
     ###soft max
     with tf.name_scope('softmax'):
         output = tf.nn.softmax(output)
 
-    ##drop out
-    # with tf.name_scope('dropout'):
-    #     out = tf.nn.dropout(output,keep_prob)
-
-    ##l2 loss function
-    with tf.name_scope('l2_loss'):
-        l2 = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
+    # ##l2 loss function
+    # with tf.name_scope('l2_loss'):
+    #     l2 = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
 
     ##define loss funct
     with tf.name_scope('loss'):
@@ -215,12 +203,13 @@ def model_start(sn_group):
     # print(len(train_x))
     # print(len(test_x))
 
-    isTrain = True
+    isTrain = False
     if isTrain:
         training(train_x, test_x, train_y, test_y)
     else:
         x_test = np.array(sn_group)
-        _, tmp = standScale(train_x, x_test)  # 模拟测试
+        train_x, tmp,origin_test = standScale(train_x, x_test)  # 模拟测试
+
         saver = tf.train.import_meta_graph("./new_model/model.ckpt.meta")
         with tf.Session() as sess:
             modelFile = tf.train.latest_checkpoint("./new_model/")
@@ -230,8 +219,84 @@ def model_start(sn_group):
             prediction = graph.get_tensor_by_name("prediction/prediction:0")
 
             pre_label = sess.run(prediction, feed_dict={"input/input_x:0": tmp})
-            print(pre_label)
+
             return pre_label
+#
+# test_group = [[264570.73, 264570.73, 274188.69, 279188.69, 90.0, 266370.74, 266370.74, 274688.69, 275888.69, 90.0, 264770.73, 266370.74, 274688.69, 274688.69, 0.0, 264770.73, 266370.74, 275888.69, 275888.69, 0.0],
+#               [264570.73, 264570.73, 274188.69, 279188.69, 90.0, 264820.73, 264820.73, 274738.69, 275838.69, 90.0, 264770.73, 266370.74, 274688.69, 274688.69, 0.0, 264770.73, 266370.74, 275888.69, 275888.69, 0.0],
+#               [264570.73, 264570.73, 274188.69, 279188.69, 90.0, 266320.74, 266320.74, 274738.69, 275838.69, 90.0, 264770.73, 266370.74, 274688.69, 274688.69, 0.0, 264770.73, 266370.74, 275888.69, 275888.69, 0.0],
+#               [264570.73, 264570.73, 274188.69, 279188.69, 90.0, 266370.74, 266370.74, 274188.69, 279188.69, 90.0, 264770.73, 266370.74, 274688.69, 274688.69, 0.0, 264770.73, 266370.74, 275888.69, 275888.69, 0.0]]
+#
+# tmp1 = [[264570.73,264570.73,274188.69,279188.69,90.0,258970.74,258970.74,274188.69,279188.69,90.0,258370.74,285670.71,279188.69,279188.69,0.0,258570.74,283570.74,274188.69,274188.69,0.0]]
+# #
+# model_start(tmp1)
+file = "../dataSet/testFile/testData.csv"
+testData,test_y = readTest(file)
+perm = np.random.permutation(test_y.shape[0])
+np.set_printoptions(suppress=True)
+
+shuffle_x = testData[perm]
+shuffle_y = test_y[perm]
+
+#
+pred = model_start(shuffle_x)
+print(list(pred).count(1))
+pre_label = pred.reshape(-1, 1)
+# print(len(shuffle_y))
+# print(len(pre_label))
+# count = 0
+# for i in range(len(shuffle_y)):
+#     if int(shuffle_y[i][0]) == int(pre_label[i][0]):
+#         count+= 1
+# #
+#
+# print(float(count/len(shuffle_y)))
+
+def con_db(db_domain, db_name, db_user, db_ps, db_port):
+    connection = psycopg2.connect(host=db_domain,
+                                  dbname=db_name,
+                                  user=db_user,
+                                  password=db_ps,
+                                  port=db_port)
+    return connection
+
+def close_db(conn, cursor):
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def insert_into_db(data):
+    print("Inserting")
+    try:
+        conn = con_db("192.168.217.129", "exampledb", "dever", "dever", "5432")
+        # conn = con_db("192.168.163.129", "lm", "dever", "dever", "5432")
+        curs = conn.cursor()
+        sql = "insert into test_table(line1,line2,line3,line4) values('%s','%s','%s','%s');"
+
+        for record in data:
+            if(record[20] == 1):
+                line1 = {'x1':record[0], 'x2':record[1], 'y1':record[2], 'y2':record[3], 'k': record[4]}
+                line2 = {'x1': record[5], 'x2': record[6], 'y1': record[7], 'y2': record[8], 'k': record[9]}
+                line3 = {'x1': record[10], 'x2': record[11], 'y1': record[12], 'y2': record[13], 'k': record[14]}
+                line4 = {'x1': record[15], 'x2': record[16], 'y1': record[17], 'y2': record[18], 'k': record[19]}
+
+                l1 = json.dumps(line1)
+                l2 = json.dumps(line2)
+                l3 = json.dumps(line3)
+                l4 = json.dumps(line4)
+
+                curs.execute(sql % (l1,l2,l3,l4))
+    except Exception as e:
+        print(traceback.print_exc())
+    finally:
+        close_db(conn, curs)
+testData_withLabel = np.concatenate((shuffle_x,pre_label), axis=1)
+
+insert_into_db(testData_withLabel)
 
 
-model_start([])
+
+
+
+
+
